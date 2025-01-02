@@ -3,13 +3,14 @@ import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 import time
 import os
+import numpy as np
 
 # 检查GPU是否可用并设置设备
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Using device: {device}")
 
 # 训练轮次、网格点数等参数设置
-epochs =10000
+epochs = 5000
 h = 100
 N = 1000  # 内部采样点数
 N1 = 100  # 边界采样点数
@@ -38,6 +39,10 @@ def boundary(n=N1):
 # 定义源项函数f(x,y)，这里示例为一个简单的函数，可根据实际泊松方程的情况修改
 def source_term(x, y):
     return 2 * torch.sin(x) * torch.cos(y)  # 示例源项函数，可替换
+
+# 假设的真实函数（用于计算误差对比，实际中需替换为真实对应函数）
+def true_function(x, y):
+    return torch.sin(x) + torch.cos(y)  # 示例真实函数，需按实际修改
 
 class MLP(torch.nn.Module):
     def __init__(self):
@@ -84,17 +89,20 @@ def l_boundary(u):
     target_value = torch.zeros_like(uxy)
     return loss(uxy, target_value)
 
-
-# 定义计时函数
+# 定义计时函数，用于计算每1000个epoch的时长以及预计总时长
 def print_time_cost(start_time, current_epoch, total_epochs):
     elapsed_time = time.time() - start_time
     current_hours = int(elapsed_time // 3600)
     current_minutes = int((elapsed_time % 3600) // 60)
     current_seconds = int(elapsed_time % 60)
-    total_hours = int((elapsed_time / current_epoch * total_epochs) // 3600)
-    total_minutes = int(((elapsed_time / current_epoch * total_epochs) % 3600) // 60)
-    total_seconds = int((elapsed_time / current_epoch * total_epochs) % 60)
+    time_per_epoch = elapsed_time / current_epoch if current_epoch > 0 else 0
+    remaining_epochs = total_epochs - current_epoch
+    remaining_time = time_per_epoch * remaining_epochs
+    total_hours = int((elapsed_time + remaining_time) // 3600)
+    total_minutes = int(((elapsed_time + remaining_time) % 3600) // 60)
+    total_seconds = int((elapsed_time + remaining_time) % 60)
     print(f"Epoch: {current_epoch}, Current time cost: {current_hours}h {current_minutes}m {current_seconds}s, "
+          f"Estimated remaining time: {int(remaining_time // 3600)}h {int((remaining_time % 3600) // 60)}m {int(remaining_time % 60)}s, "
           f"Total estimated time cost: {total_hours}h {total_minutes}m {total_seconds}s")
 
 
@@ -109,7 +117,7 @@ for i in range(epochs):
     l.backward()
     opt.step()
     scheduler.step()
-    if i % 1000 == 0 and i > 0:
+    if i % 1000 == 0:
         print_time_cost(start_time, i, epochs)
     if i % 100 == 0:
         print(i)
@@ -133,10 +141,33 @@ yy = ym.reshape(-1, 1).to(device)
 u_pred = u(torch.cat([xx, yy], dim=1))
 u_pred_fig = u_pred.reshape(h, h).cpu().detach().numpy()
 
-# 作PINN数值解图
-fig = plt.figure(1)
-ax = Axes3D(fig)
-ax.plot_surface(xm.detach().cpu().numpy(), ym.detach().cpu().numpy(), u_pred_fig)
-ax.text2D(0, 0.9, "PINN", transform=ax.transAxes)
+# 计算误差（这里使用均方误差为例，你可根据实际情况调整误差计算方式）
+true_fun_vals = true_function(xm, ym).reshape(-1, 1).cpu().detach().numpy()
+error = np.mean((u_pred_fig - true_fun_vals) ** 2)
+
+# 作实际图像（这里使用假设的真实函数绘制，实际替换为真实函数对应的图像）
+true_fig = true_function(xm, ym).reshape(h, h).cpu().detach().numpy()
+fig_true = plt.figure(2)
+ax_true = Axes3D(fig_true)
+ax_true.plot_surface(xm.detach().cpu().numpy(), ym.detach().cpu().numpy(), true_fig)
+ax_true.text2D(0, 0.9, "True Function", transform=ax_true.transAxes)
 plt.show()
-fig.savefig("PINN_solve.png")
+fig_true.savefig("True_function.png")
+
+# 作PINN数值解图
+fig_pinn = plt.figure(1)
+ax_pinn = Axes3D(fig_pinn)
+ax_pinn.plot_surface(xm.detach().cpu().numpy(), ym.detach().cpu().numpy(), u_pred_fig)
+ax_pinn.text2D(0, 0.9, "PINN", transform=ax_pinn.transAxes)
+plt.show()
+fig_pinn.savefig("PINN_solve.png")
+
+# 作误差图像（这里简单以热力图形式展示误差分布，可根据实际需求调整可视化方式）
+error_fig = (u_pred_fig - true_fun_vals).reshape(h, h)
+fig_error = plt.figure(3)
+ax_error = plt.axes()
+cax = ax_error.imshow(error_fig, cmap='hot', interpolation='nearest')
+fig_error.colorbar(cax)
+ax_error.set_title("Error")
+plt.show()
+fig_error.savefig("Error.png")
